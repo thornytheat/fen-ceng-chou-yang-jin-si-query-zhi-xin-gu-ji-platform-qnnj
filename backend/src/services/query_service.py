@@ -3,6 +3,9 @@
 抽样是确定性的：明细行在 seed 时写入 sample_rank（64bit 混合哈希，20 位零填充字符串），
 查询按 (dataset_id, stratum_code, sample_rank) 索引取每层最小的 n_h 行（字典序 = 数值序），
 因此同样输入永远得到同样样本，可复现、可复核。
+
+数据版本：查询全程只读方案绑定的不可变快照里的层容量 / 均值 / 波动，不回查会被刷新原地
+改写的活动分层表；结果行固化 snapshot_id/snapshot_code，页面与导出永远展示同一数据版本。
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from sqlalchemy.orm import Session
 from src.constants.enums import QueryStatus
 from src.constants.limits import MAX_STRATA_FILTER
 from src.models.approx_query import ApproxQuery
-from src.services import audit_service, dataset_service, estimation_service, plan_service
+from src.services import audit_service, estimation_service, plan_service, snapshot_service
 from src.utils.errors import AppError
 from src.utils.timeutil import business_date, local_iso
 
@@ -68,14 +71,18 @@ def run_query(
     plan = plan_service.get_plan(db, plan_id)
     if plan.status != "active":
         raise AppError("PLAN_NOT_ACTIVE", 409, detail=f"plan status={plan.status}")
+    # 新查询只能用匹配当前快照且重新审批过的方案
+    snapshot_service.assert_matches_current(db, plan)
+    snapshot = snapshot_service.get_snapshot(db, plan.snapshot_id)
     dataset = plan.dataset
-    known = {s.code for s in dataset.strata}
+    known = {item["code"] for item in snapshot.strata_json}
     wanted = [code for code in (strata_filter or []) if code]
     if len(wanted) > MAX_STRATA_FILTER:
         raise AppError("VALIDATION", 422, detail="too many strata")
     if wanted and not set(wanted).issubset(known):
         raise AppError("VALIDATION", 422, detail="unknown stratum code")
-    meta = dataset_service.strata_inputs(dataset, wanted or None)
+    # 层口径全部取自方案绑定的不可变快照
+    meta = snapshot_service.strata_inputs_from_snapshot(snapshot, wanted or None)
     if not meta:
         raise AppError("DATASET_EMPTY", 422, detail="no strata selected")
 
@@ -118,6 +125,8 @@ def run_query(
     row = ApproxQuery(
         plan_id=plan.id,
         dataset_id=dataset.id,
+        snapshot_id=snapshot.id,
+        snapshot_code=snapshot.code,
         code=_next_code(db),
         filter_strata=wanted,
         sample_size=int(estimate["sample_size"]),
@@ -165,6 +174,7 @@ def run_query(
             "code": row.code,
             "dataset": dataset.code,
             "plan": plan.code,
+            "snapshot": snapshot.code,
             "sample_size": row.sample_size,
             "estimate_minor": row.value_estimate_minor,
             "rel_error_pct": float(row.rel_error_pct),
@@ -213,6 +223,8 @@ def query_out(db: Session, row: ApproxQuery) -> dict:
         "dataset_name": dataset.name,
         "metric_label": dataset.metric_label,
         "unit": dataset.unit,
+        "snapshot_id": row.snapshot_id,
+        "snapshot_code": row.snapshot_code,
         "filter_strata": list(row.filter_strata or []),
         "sample_size": row.sample_size,
         "value_estimate": round(row.value_estimate_minor / scale, 2),

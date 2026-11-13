@@ -1,9 +1,13 @@
 export type Listener = () => void;
 
-export interface Store<T> {
+/** 只读视图：useSyncExternalStore 只需要这两个方法（包装后的领域 store 没有 set）。 */
+export interface ReadonlyStore<T> {
   subscribe: (listener: Listener) => () => void;
   getState: () => T;
-  set: (patch: Partial<T> | ((state: T) => T)) => void;
+}
+
+export interface Store<T> extends ReadonlyStore<T> {
+  set: (patch: Partial<T> | ((state: T) => Partial<T>)) => void;
 }
 
 export function createStore<T extends object>(initial: T): Store<T> {
@@ -20,7 +24,8 @@ export function createStore<T extends object>(initial: T): Store<T> {
       return state;
     },
     set(patch) {
-      state = typeof patch === 'function' ? (patch as (value: T) => T)(state) : { ...state, ...patch };
+      const next = typeof patch === 'function' ? (patch as (value: T) => Partial<T>)(state) : patch;
+      state = { ...state, ...next };
       listeners.forEach((listener) => listener());
     },
   };

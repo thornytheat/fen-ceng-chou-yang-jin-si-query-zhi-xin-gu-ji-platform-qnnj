@@ -27,8 +27,10 @@ celery_app.conf.update(
 
 celery_app.conf.beat_schedule = {
     "sampleaqp-heartbeat": {"task": "sampleaqp.heartbeat", "schedule": 20.0},
-    "sampleaqp-refresh-truth": {"task": "sampleaqp.refresh_truth", "schedule": crontab(minute="*/30")},
+    "sampleaqp-refresh-snapshot": {"task": "sampleaqp.refresh_snapshot", "schedule": crontab(minute="*/30")},
 }
 
 TASK_HEARTBEAT = "sampleaqp.heartbeat"
+TASK_REFRESH_SNAPSHOT = "sampleaqp.refresh_snapshot"
+# 向后兼容的旧任务名别名
 TASK_REFRESH_TRUTH = "sampleaqp.refresh_truth"

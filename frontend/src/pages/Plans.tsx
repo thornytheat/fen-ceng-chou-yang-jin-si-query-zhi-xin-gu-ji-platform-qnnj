@@ -190,6 +190,13 @@ export default function Plans() {
                 <div className="plan-card-meta tiny">
                   {plan.dataset_code} · 已跑 {plan.query_count} 次
                 </div>
+                <div className="plan-card-meta tiny">
+                  {plan.stale ? (
+                    <span className="plan-stale-tag">快照已过期 · {plan.snapshot_code ?? '无版本'}</span>
+                  ) : (
+                    <span className="mono">绑定 {plan.snapshot_code ?? '当前快照'}</span>
+                  )}
+                </div>
               </button>
             ))}
             {!plans.items.length ? <div className="tiny muted">还没有方案，先在左侧建一个。</div> : null}
@@ -203,10 +210,24 @@ export default function Plans() {
                 <div>
                   <div className="eyebrow">{selected.code} · {selected.dataset_code}</div>
                   <h3>{selected.name}</h3>
+                  <div className="tiny mono" style={{ marginTop: 6 }}>
+                    {selected.stale ? (
+                      <span className="plan-stale-tag">
+                        绑定快照 {selected.snapshot_code ?? '无'} 已不是当前版本，需按当前快照重建并重新审批
+                      </span>
+                    ) : (
+                      <span>数据版本：{selected.snapshot_code ?? '当前快照'}（v{selected.snapshot_version ?? '—'}）</span>
+                    )}
+                  </div>
                 </div>
                 <div className="panel-actions">
                   {selected.status === 'draft' && can(role, 'plan:approve') ? (
-                    <button className="btn btn-sm btn-primary" disabled={approve.busy} onClick={() => void approve.run(selected.id)}>
+                    <button
+                      className="btn btn-sm btn-primary"
+                      disabled={approve.busy || selected.stale}
+                      title={selected.stale ? '快照已过期，不能审批，请重建方案' : ''}
+                      onClick={() => void approve.run(selected.id)}
+                    >
                       {approve.busy ? '审批中 …' : '审批通过'}
                     </button>
                   ) : null}
@@ -217,6 +238,13 @@ export default function Plans() {
                   ) : null}
                 </div>
               </div>
+
+              {selected.stale ? (
+                <div className="notice">
+                  该方案依据旧快照 {selected.snapshot_code ?? ''} 的层容量 / 均值 / 波动计算。线路数据刷新后当前快照已前进，
+                  旧方案不能再审批或跑新查询；请在左侧按当前快照新建方案并重新审批。历史查询仍随原快照保留。
+                </div>
+              ) : null}
 
               <div className="detail-readouts">
                 <div>

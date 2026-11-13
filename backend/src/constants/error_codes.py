@@ -9,6 +9,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "VALIDATION": "请求参数不合法",
     "RATE_LIMITED": "请求过于频繁，请稍后再试",
     "DATASET_EMPTY": "数据集还没有载入明细行",
+    "SNAPSHOT_NOT_READY": "数据集还没有已发布的数据快照，请先刷新发布快照",
+    "PLAN_SNAPSHOT_STALE": "方案绑定的数据快照已过期，请按当前快照重建方案并重新审批",
     "PLAN_NOT_ACTIVE": "只有已审批的方案才能跑近似查询",
     "PLAN_CAPACITY": "层容量不足，已截断并按权重重分配",
     "QC_ORDER": "复核链必须按 分析师 → 负责人 → 业务方 顺序签署",

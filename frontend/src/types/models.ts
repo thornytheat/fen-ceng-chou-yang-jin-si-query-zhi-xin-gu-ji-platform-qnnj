@@ -15,6 +15,44 @@ export interface LoginResult {
   user: UserInfo;
 }
 
+export interface SnapshotBrief {
+  id: number;
+  code: string;
+  version: number;
+  status: string;
+  content_fingerprint: string;
+  published_at: string | null;
+}
+
+export interface SnapshotStratum {
+  code: string;
+  label: string;
+  population: number;
+  mean_minor: number;
+  mean_value: number;
+  prior_std: number;
+  min_sample: number;
+  sort_order: number;
+}
+
+export interface DataSnapshot {
+  id: number;
+  code: string;
+  dataset_id: number;
+  version: number;
+  status: string;
+  row_count: number;
+  truth_total_minor: number;
+  precision_target_pct: number;
+  confidence_level: number;
+  content_fingerprint: string;
+  created_by: string;
+  note: string | null;
+  published_at: string | null;
+  created_at: string | null;
+  strata: SnapshotStratum[];
+}
+
 export interface Stratum {
   code: string;
   label: string;
@@ -48,6 +86,7 @@ export interface Dataset {
   strata_count: number;
   plan_count: number;
   query_count: number;
+  snapshot: SnapshotBrief | null;
   updated_at: string;
   strata?: Stratum[];
 }
@@ -70,6 +109,11 @@ export interface Plan {
   dataset_code: string;
   dataset_name: string;
   metric_label: string;
+  snapshot_id: number | null;
+  snapshot_code: string | null;
+  snapshot_version: number | null;
+  snapshot_current: boolean;
+  stale: boolean;
   name: string;
   confidence_level: number;
   target_error_pct: number;
@@ -113,6 +157,8 @@ export interface ApproxQuery {
   dataset_name: string;
   metric_label: string;
   unit: string;
+  snapshot_id: number | null;
+  snapshot_code: string | null;
   filter_strata: string[];
   sample_size: number;
   value_estimate: number;

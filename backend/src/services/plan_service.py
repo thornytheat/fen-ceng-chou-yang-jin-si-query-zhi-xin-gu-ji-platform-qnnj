@@ -1,4 +1,4 @@
-"""抽样方案：创建时即用算法 1 算出样本量与每层分配。"""
+"""抽样方案：创建时即用算法 1 算出样本量与每层分配，并绑定不可变数据快照。"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from src.constants.enums import PLAN_STATUS_LABELS, AllocationMethod, PlanStatus
 from src.models.sample_plan import SamplePlan
-from src.services import audit_service, dataset_service, sampling_service
+from src.models.snapshot import DataSnapshot
+from src.services import audit_service, dataset_service, sampling_service, snapshot_service
 from src.utils.errors import AppError
 from src.utils.timeutil import local_iso
 
@@ -39,6 +40,9 @@ def plan_out(db: Session, plan: SamplePlan) -> dict:
 
     query_count = db.scalar(select(func.count()).select_from(ApproxQuery).where(ApproxQuery.plan_id == plan.id)) or 0
     allocation = list(plan.allocation or [])
+    current = snapshot_service.current_snapshot(db, dataset)
+    snapshot = db.get(DataSnapshot, plan.snapshot_id) if plan.snapshot_id else None
+    is_current = bool(current and plan.snapshot_id == current.id)
     return {
         "id": plan.id,
         "code": plan.code,
@@ -46,6 +50,11 @@ def plan_out(db: Session, plan: SamplePlan) -> dict:
         "dataset_code": dataset.code,
         "dataset_name": dataset.name,
         "metric_label": dataset.metric_label,
+        "snapshot_id": plan.snapshot_id,
+        "snapshot_code": snapshot.code if snapshot else None,
+        "snapshot_version": snapshot.version if snapshot else None,
+        "snapshot_current": is_current,
+        "stale": not is_current,
         "name": plan.name,
         "confidence_level": float(plan.confidence_level),
         "target_error_pct": float(plan.target_error_pct),
@@ -81,10 +90,9 @@ def plan_out(db: Session, plan: SamplePlan) -> dict:
 
 def create_plan(db: Session, payload, actor: dict, ip: str | None = None) -> SamplePlan:
     dataset = dataset_service.get_dataset(db, payload.dataset_id)
-    if not dataset.strata:
-        raise AppError("DATASET_EMPTY", 422, detail="dataset has no strata")
-    result = sampling_service.from_dataset(
-        dataset,
+    snapshot = snapshot_service.require_current_snapshot(db, dataset)
+    result = sampling_service.from_snapshot(
+        snapshot,
         confidence=float(payload.confidence_level),
         target=float(payload.target_error_pct),
         method=payload.method.value if hasattr(payload.method, "value") else str(payload.method),
@@ -93,6 +101,7 @@ def create_plan(db: Session, payload, actor: dict, ip: str | None = None) -> Sam
         row["capacity_warning"] = result["capacity_warning"]
     plan = SamplePlan(
         dataset_id=dataset.id,
+        snapshot_id=snapshot.id,
         code=_next_code(db),
         name=payload.name.strip(),
         confidence_level=Decimal(str(round(float(payload.confidence_level), 3))),
@@ -118,6 +127,7 @@ def create_plan(db: Session, payload, actor: dict, ip: str | None = None) -> Sam
         detail={
             "code": plan.code,
             "dataset": dataset.code,
+            "snapshot": snapshot.code,
             "sample_size": plan.sample_size,
             "expected_ci_pct": float(plan.expected_ci_pct),
             "method": plan.method,
@@ -132,6 +142,8 @@ def approve_plan(db: Session, plan_id: int, actor: dict, ip: str | None = None) 
     plan = get_plan(db, plan_id)
     if plan.status == PlanStatus.ARCHIVED.value:
         raise AppError("PLAN_NOT_ACTIVE", 409, detail="archived plan cannot be approved")
+    # 只允许审批绑定当前快照的方案；快照已刷新必须重建方案重新审批
+    snapshot_service.assert_matches_current(db, plan)
     plan.status = PlanStatus.ACTIVE.value
     plan.approved_by = actor["email"]
     plan.approved_at = datetime.utcnow()
@@ -142,7 +154,11 @@ def approve_plan(db: Session, plan_id: int, actor: dict, ip: str | None = None) 
         action="plan.approve",
         entity="sample_plan",
         entity_id=str(plan.id),
-        detail={"code": plan.code, "sample_size": plan.sample_size},
+        detail={
+            "code": plan.code,
+            "sample_size": plan.sample_size,
+            "snapshot_id": plan.snapshot_id,
+        },
         ip=ip,
     )
     db.flush()

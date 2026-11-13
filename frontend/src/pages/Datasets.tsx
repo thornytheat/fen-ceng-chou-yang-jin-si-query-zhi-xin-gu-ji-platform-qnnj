@@ -44,8 +44,19 @@ export default function Datasets() {
 
   const refresh = useAsync(async () => {
     if (!selected) return null;
-    const result = await datasetStore.refreshTruth(selected.id);
-    toast.info(result.message);
+    const result = await datasetStore.refreshSnapshot(selected.id);
+    if (result.queued) {
+      toast.info(result.message);
+      window.setTimeout(() => {
+        void datasetStore.reloadAfterRefresh(selected.id).catch(() => undefined);
+      }, 1400);
+    } else if (result.reused) {
+      toast.ok(`数据未变化，仍为当前快照 ${result.snapshot_code ?? ''}（重复刷新只生效一次）`);
+      await datasetStore.reloadAfterRefresh(selected.id);
+    } else {
+      toast.ok(`已发布新快照 ${result.snapshot_code ?? ''}（v${result.version ?? ''}），旧版本已保留`);
+      await datasetStore.reloadAfterRefresh(selected.id);
+    }
     return result;
   });
 
@@ -128,6 +139,15 @@ export default function Datasets() {
                   {selected.code} · 先验口径 {selected.prior_period}
                 </div>
                 <h3>{selected.name}</h3>
+                {selected.snapshot ? (
+                  <div className="snapshot-badge mono" title={`指纹 ${selected.snapshot.content_fingerprint}`}>
+                    <span className="snapshot-dot" />
+                    当前数据版本 {selected.snapshot.code}（v{selected.snapshot.version}）
+                    <span className="tiny muted"> · 发布于 {selected.snapshot.published_at ?? '—'}</span>
+                  </div>
+                ) : (
+                  <div className="snapshot-badge is-empty mono">尚未发布数据快照，请先刷新</div>
+                )}
               </div>
               <VialTag code={`${selected.strata_count} STRATA`} label={selected.strata_field} />
             </div>
@@ -178,17 +198,20 @@ export default function Datasets() {
                     <dd className="mono">{selected.query_count}</dd>
                   </div>
                 </dl>
-                <button className="btn btn-sm" disabled={!isAdmin || refresh.busy} onClick={() => void refresh.run()}>
-                  {refresh.busy ? '投递中 …' : '刷新全量真值'}
+                <button className="btn btn-sm" disabled={!isAdmin || refresh.busy || state.refreshing} onClick={() => void refresh.run()}>
+                  {refresh.busy || state.refreshing ? '发布快照中 …' : '刷新并发布新快照'}
                 </button>
                 {!isAdmin ? <div className="tiny muted">刷新基线需要分析负责人权限</div> : null}
+                <div className="tiny muted">
+                  刷新会把层容量 / 均值 / 波动 / 真值整版冻结为不可变快照；数据没变的重复刷新只生效一次。
+                </div>
                 {selected.measured_full_scan_ms ? (
                   <div className="tiny muted">演示库实测全量聚合 {formatMs(selected.measured_full_scan_ms)}</div>
                 ) : null}
               </div>
             </div>
 
-            <h4 className="section-title">分层明细（N_h / 先验 S_h / 层均值）</h4>
+            <h4 className="section-title">分层明细（N_h / 先验 S_h / 层均值）· 取自当前快照</h4>
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
@@ -217,6 +240,56 @@ export default function Datasets() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <h4 className="section-title">数据快照历史（不可变版本）</h4>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>快照</th>
+                    <th className="num">版本</th>
+                    <th className="num">行数</th>
+                    <th className="num">全量真值</th>
+                    <th>精度/置信</th>
+                    <th>发布时间</th>
+                    <th>发布人</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.snapshots.map((snap) => (
+                    <tr key={snap.id}>
+                      <td className="mono">{snap.code}</td>
+                      <td className="num mono">v{snap.version}</td>
+                      <td className="num mono">{formatInt(snap.row_count)}</td>
+                      <td className="num mono">
+                        {formatMetric(snap.truth_total_minor / selected.unit_scale, selected.unit, selected.unit_scale)}
+                      </td>
+                      <td className="mono tiny">
+                        ±{snap.precision_target_pct.toFixed(2)}% · {(snap.confidence_level * 100).toFixed(0)}%
+                      </td>
+                      <td className="mono tiny">{snap.published_at ?? '—'}</td>
+                      <td className="tiny">{snap.created_by}</td>
+                      <td>
+                        {selected.snapshot?.id === snap.id ? (
+                          <span className="mini-state is-loaded">当前版本</span>
+                        ) : (
+                          <span className="mini-state">历史版本</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {!state.snapshots.length ? (
+                    <tr>
+                      <td colSpan={8} className="tiny muted">还没有快照，点「刷新并发布新快照」生成第一版。</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="tiny muted">
+              旧方案与历史查询随原快照保留；新查询只能用匹配当前快照并重新审批的方案，页面、结果与导出始终是同一数据版本。
             </div>
 
             <div className={`calibrate ${isAdmin ? '' : 'is-readonly'}`}>

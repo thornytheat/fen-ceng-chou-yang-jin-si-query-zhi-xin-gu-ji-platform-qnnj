@@ -30,7 +30,7 @@
 
 ## 3. 主要功能（一条链路四个模块）
 
-1. **数据集概览**：三份数据集（GMV / 时效 / 成本）× 5 个线路层，展示 N_h、层占比、先验 S_h、层均值、精度标准；admin 可校准精度标准、投递后台「全量基线刷新」。
+1. **数据集概览**：三份数据集（GMV / 时效 / 成本）× 5 个线路层，展示 N_h、层占比、先验 S_h、层均值、精度标准；admin 可校准精度标准、投递后台「快照刷新」。所有层口径都取自数据集当前的不可变数据快照。
 2. **抽样方案编辑**：输入置信度 + 目标误差 → 后端算法给出总样本量、每层 n_h、Neyman 权重、预计 CI、层容量约束；草稿须 admin 审批。
 3. **近似查询**：按方案抽行 → HT 点估计 + 有限总体校正方差 + 95% CI，并现场执行同口径全量聚合做对照；输出各层贡献、方差占比、耗时与提速。
 4. **精度自检**：相对误差 / CI 宽度 / 层最小样本 / 覆盖率 / 提速比五项检查，给出达标结论；三角色复核链（分析师提交 → 负责人复核 → 业务方知悉）完成后可导出。
@@ -66,8 +66,22 @@ CI      = Ŷ ± z·√V,   相对误差 = z·√V / Ŷ
 
 - 数据集无明细行 → `DATASET_EMPTY`（422），前端给可恢复空态。
 - 方案未审批就查询 → `PLAN_NOT_ACTIVE`（409）。
+- 数据集还没发布快照就建方案 → `SNAPSHOT_NOT_READY`（409）。
+- 方案绑定的快照已不是当前版本（刷新后旧方案）→ `PLAN_SNAPSHOT_STALE`（409），需按当前快照重建并重新审批。
 - 层容量不足 / 先验 S_h 缺失 → 返回 `capacity_warning`，算法降级但不静默。
 - 复核链顺序错误 / 角色不符 → `QC_ORDER` / `FORBIDDEN`（409 / 403）。
+
+### 数据版本：不可变快照（snapshot）
+
+线路数据每半小时由 worker 重跑，层容量 N_h、层均值、层波动 S_h 与金额分布都会变。系统**绝不原地改写**这些口径，而是把每一次成功刷新整版冻结成一条不可变 `data_snapshots`：
+
+- **整版一次可见**：一次快照同时冻结每层 N_h / 均值 / 波动、全量真值、精度/置信标准与指纹；`datasets.current_snapshot_id` 指针只在整版构建成功并提交后才切换。层容量、均值、波动在同一事务内换齐，不会出现「只改了总额」的半套状态。
+- **原子 + 失败回滚**：计算与指针切换在单个 DB 事务内，任何异常整体回滚，不留半成品。
+- **重复刷新只生效一次**：对整版层口径取 SHA-256 指纹，内容没变的刷新直接复用当前快照（审计记 `dataset.refresh_noop`），不产生新版本。
+- **方案 / 查询绑定版本**：建方案与跑查询都绑定当时的快照 id；方案审批、新查询前校验该快照仍是当前版本，否则返回 `PLAN_SNAPSHOT_STALE`，必须按当前快照重建方案并重新审批。
+- **历史随原快照保留**：旧方案、历史近似查询、自检与导出都固化 `snapshot_code`，永远展示自己那一版的层容量 / 均值 / 波动；页面、结果、导出是同一数据版本。
+- 旧入口 `POST /api/datasets/{id}/refresh-truth` 与 Celery `refresh_truth` 任务名保留为别名，语义统一为「发布不可变快照」；新入口为 `POST /api/datasets/{id}/refresh-snapshot`，历史版本可经 `GET /api/datasets/{id}/snapshots` 查询。
+- 升级已有库时，应用启动会为每个数据集补一条 v1 基线快照（冻结既有活动分层口径），旧方案/历史结果自动归属同一版本；也可手工执行 `migrations/0002_data_snapshots.sql`。
 
 ## 5. 快速启动
 
@@ -86,7 +100,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 结束后打印（幂等，两次逐字一致）：
 
 ```
-SEED_SUMMARY brand=sampleaqp datasets=3 strata=5 rows=120000 plans=2 users=3
+SEED_SUMMARY brand=sampleaqp datasets=3 strata=5 rows=120000 plans=2 snapshots=3 users=3
 ```
 
 演示数据规模：**120,000 行**明细（GMV 10 万行 / 时效 1.2 万行 / 成本 8,000 行），生产表规模按 8,000 万行标注（数据集字段 `source_rows`）。
@@ -106,7 +120,7 @@ SEED_SUMMARY brand=sampleaqp datasets=3 strata=5 rows=120000 plans=2 users=3
 |---|---|
 | frontend | React 18 + TypeScript + Vite 5，Nginx 1.27 托管，自绘 SVG 图表 |
 | backend | Python 3.11 + FastAPI 0.115 + SQLAlchemy 2.0 + Pydantic v2 |
-| worker | Celery 5.4 + Redis 7（心跳 + 全量基线刷新任务） |
+| worker | Celery 5.4 + Redis 7（心跳 + 每半小时不可变快照刷新任务） |
 | db | MySQL 8.0（utf8mb4） |
 | 认证 | JWT（HS256）+ bcrypt 密码哈希 |
 | 观测 | 审计日志（HTTP + 领域双层）+ Redis 固定窗口限流 |
@@ -119,14 +133,14 @@ gb-583/
 ├── .env.example
 ├── backend/
 │   ├── Dockerfile / requirements.txt
-│   ├── migrations/             # 0001_initial.sql（与 ORM 对齐）
+│   ├── migrations/             # 0001 基线表 / 0002 不可变快照（与 ORM 对齐）
 │   ├── scripts/                # seed_demo.py / demo_config.py / worker_healthcheck.sh
 │   └── src/
 │       ├── config/             # settings / database / celery_app / app
 │       ├── constants/          # roles / enums / limits / error_codes
-│       ├── models/             # user / dataset / waybill / sample_plan / approx_query / qc_check / audit
+│       ├── models/             # user / dataset / snapshot(不可变版本) / waybill / sample_plan / approx_query / qc_check / audit
 │       ├── schemas/            # auth / dataset / plan / query / qc / common
-│       ├── services/           # sampling / estimation / dataset / plan / query / qc / export / audit / auth
+│       ├── services/           # snapshot(快照发布/版本校验) / sampling / estimation / dataset / plan / query / qc / export / audit / auth
 │       ├── controllers/        # 薄控制器
 │       ├── routes/             # /api/*（health/auth/datasets/plans/queries/qc/audit）
 │       ├── middlewares/        # auth / rbac / rate_limit / audit_logger / error_handler

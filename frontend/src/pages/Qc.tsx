@@ -127,6 +127,10 @@ export default function Qc() {
           {query ? (
             <div className="console-readout stack mono">
               <div>
+                <span>数据版本</span>
+                <b>{query.snapshot_code ?? '未记录'}</b>
+              </div>
+              <div>
                 <span>点估计</span>
                 <b>{formatMetric(query.value_estimate, query.unit, 100)}</b>
               </div>

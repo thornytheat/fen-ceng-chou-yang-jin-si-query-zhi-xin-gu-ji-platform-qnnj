@@ -36,10 +36,27 @@ def _run_seed_once() -> None:
         logger.warning("[SEED_DEMO] seed failed (ignored): %s", exc)
 
 
+def _ensure_baseline_snapshots() -> None:
+    """升级兜底：为还没有快照的数据集冻结 v1 基线（幂等），保证旧方案/历史结果归属同一版本。"""
+    from sqlalchemy import select
+
+    from src.config.database import session_scope
+    from src.models.dataset import Dataset
+    from src.services import snapshot_service
+
+    try:
+        with session_scope() as db:
+            for dataset in db.scalars(select(Dataset).order_by(Dataset.id)):
+                snapshot_service.ensure_baseline_snapshot(db, dataset, created_by="bootstrap")
+    except Exception as exc:  # noqa: BLE001 - 启动阶段不阻塞
+        logger.warning("[SNAPSHOT] baseline ensure failed (ignored): %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _bootstrap_database()
     _run_seed_once()
+    _ensure_baseline_snapshots()
     yield
 
 

@@ -36,11 +36,12 @@ def build_estimate_markdown(query, qc=None) -> tuple[str, str]:
     lines.append("| 项目 | 内容 |")
     lines.append("| --- | --- |")
     lines.append(f"| 数据集 | `{dataset.code}` · {dataset.name} |")
+    lines.append(f"| 数据快照（不可变版本） | `{query.snapshot_code or '未记录'}` |")
     lines.append(f"| 指标 | {dataset.metric_label}（{unit}） |")
     lines.append(f"| 全量规模 | {dataset.row_count:,} 行（生产表约 {dataset.source_rows:,} 行） |")
-    lines.append(f"| 分层字段 | `{dataset.strata_field}` · {len(dataset.strata)} 层 |")
+    lines.append(f"| 分层字段 | `{dataset.strata_field}` · {len(query.strata_detail or [])} 层 |")
     lines.append("| 查询范围 | " + ("、".join(query.filter_strata) if query.filter_strata else "全部层") + " |")
-    lines.append(f"| 方案 | `{plan.code}` · {plan.name} |")
+    lines.append(f"| 方案 | `{plan.code}` · {plan.name}（绑定快照 `{query.snapshot_code or '未记录'}`） |")
     lines.append(
         f"| 抽样口径 | {plan.method} · 置信 {float(plan.confidence_level):.0%} · 目标误差 {float(plan.target_error_pct):.2f}% · 样本 {plan.sample_size:,} 行 |"
     )
@@ -121,6 +122,10 @@ def build_estimate_markdown(query, qc=None) -> tuple[str, str]:
     lines.append("- 样本量：`n = (z·Σ N_h·S_h / (e·Y))²`，`n_h = n·N_h·S_h / Σ N_h·S_h`（Neyman）；S_h 缺失退化为比例分配，每层最小 30 行、超出层容量截断重分配。")
     lines.append("- 估计量：`Ŷ = Σ_h N_h·ȳ_h`；方差 `V = Σ_h N_h²·(1 - n_h/N_h)·s_h²/n_h`（有限总体校正）；`CI = Ŷ ± z·√V`。")
     lines.append("- 抽样实现：明细行 seed 时写入确定性 `sample_rank`，查询按每层最小 rank 取 n_h 行，同样输入永远同样样本，可复现。")
+    lines.append(
+        f"- 数据版本：本次估算的层容量 N_h、层均值、波动 S_h 全部冻结在不可变快照 `{query.snapshot_code or '未记录'}`；"
+        "后续线路数据刷新只会发布新快照，不改动本结果，页面、结果与导出始终是同一数据版本。"
+    )
     lines.append("- 全量真值：同一数据集、同一过滤范围的 `SUM(value_minor)` 真实全表聚合，不是写死的对照值。")
     lines.append("")
     lines.append("---")

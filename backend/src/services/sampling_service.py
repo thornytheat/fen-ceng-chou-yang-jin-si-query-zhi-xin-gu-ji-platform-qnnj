@@ -183,7 +183,7 @@ def compute_allocation(
 
 
 def from_dataset(dataset, confidence: float | None = None, target: float | None = None, method: str = "neyman") -> dict:
-    """把 Dataset + DatasetStratum ORM 对象转成算法入参。"""
+    """把 Dataset + DatasetStratum ORM 对象转成算法入参（seed / 基线快照使用）。"""
     strata = [
         StratumInput(
             code=s.code,
@@ -198,3 +198,19 @@ def from_dataset(dataset, confidence: float | None = None, target: float | None 
     conf = float(confidence if confidence is not None else dataset.confidence_level)
     err = float(target if target is not None else dataset.precision_target_pct)
     return compute_allocation(strata, conf, err, method)
+
+
+def from_snapshot(snapshot, confidence: float, target: float, method: str) -> dict:
+    """从不可变快照的冻结层口径计算样本量（业务链路唯一入口）。"""
+    strata = [
+        StratumInput(
+            code=item["code"],
+            label=item["label"],
+            population=int(item["population"]),
+            mean_minor=float(item["mean_minor"]),
+            prior_std=float(item["prior_std"]),
+            min_sample=int(item.get("min_sample", 30)),
+        )
+        for item in snapshot.strata_json
+    ]
+    return compute_allocation(strata, float(confidence), float(target), method)

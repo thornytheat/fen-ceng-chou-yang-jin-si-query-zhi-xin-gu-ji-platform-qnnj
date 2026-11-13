@@ -17,6 +17,8 @@ class SamplePlan(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    # 方案计算时所依据的不可变数据版本；审批与跑查询都要求它仍是数据集当前快照
+    snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("data_snapshots.id", ondelete="RESTRICT"))
     code: Mapped[str] = mapped_column(String(48), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     confidence_level: Mapped[Decimal] = mapped_column(DECIMAL(4, 3), nullable=False)

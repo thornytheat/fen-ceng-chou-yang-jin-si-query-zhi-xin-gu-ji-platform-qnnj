@@ -33,6 +33,11 @@ class PlanOut(BaseModel):
     dataset_code: str
     dataset_name: str
     metric_label: str
+    snapshot_id: int | None = None
+    snapshot_code: str | None = None
+    snapshot_version: int | None = None
+    snapshot_current: bool = False
+    stale: bool = False
     name: str
     confidence_level: float
     target_error_pct: float

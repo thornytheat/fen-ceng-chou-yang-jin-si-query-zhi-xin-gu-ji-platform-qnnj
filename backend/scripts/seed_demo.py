@@ -1,4 +1,4 @@
-"""幂等 seed：3 数据集 / 5 层 / 12 万明细行 / 2 方案 / 3 账号。
+"""幂等 seed：3 数据集 / 5 层 / 12 万明细行 / 2 方案 / 3 账号 / 每数据集 1 条 v1 快照。
 
 自然键：
   users.email / datasets.code / dataset_strata(dataset_id, code) /
@@ -11,6 +11,8 @@
   DS-ONTIME-DURATION   = 344,640.0 小时
   DS-COST-PER-WAYBILL  = ¥927,680.00
 两次 seed 的 SEED_SUMMARY 逐字一致；已有数据不会被覆盖。
+
+seed 会在方案创建前为每个数据集冻结一条 v1 不可变快照，方案与后续查询都绑定该版本。
 """
 from __future__ import annotations
 
@@ -29,9 +31,10 @@ from src.models.audit import AuditLog
 from src.models.dataset import Dataset, DatasetStratum
 from src.models.qc_check import QcCheck
 from src.models.sample_plan import SamplePlan
+from src.models.snapshot import DataSnapshot
 from src.models.user import User
 from src.models.waybill import Waybill
-from src.services import audit_service, sampling_service
+from src.services import audit_service, sampling_service, snapshot_service
 from src.utils.security import hash_password
 from scripts.demo_config import (
     DATASETS,
@@ -196,8 +199,10 @@ def ensure_plans(db, datasets: dict[str, Dataset], admin_email: str) -> int:
         plan = db.scalar(select(SamplePlan).where(SamplePlan.code == spec["code"]))
         if plan is not None:
             continue
-        result = sampling_service.from_dataset(
-            dataset,
+        # seed 方案基于数据集当前（基线）快照的不可变层口径计算
+        snapshot = snapshot_service.require_current_snapshot(db, dataset)
+        result = sampling_service.from_snapshot(
+            snapshot,
             confidence=spec["confidence_level"],
             target=spec["target_error_pct"],
             method=spec["method"],
@@ -206,6 +211,7 @@ def ensure_plans(db, datasets: dict[str, Dataset], admin_email: str) -> int:
             row["capacity_warning"] = result["capacity_warning"]
         plan = SamplePlan(
             dataset_id=dataset.id,
+            snapshot_id=snapshot.id,
             code=spec["code"],
             name=spec["name"],
             confidence_level=Decimal(str(spec["confidence_level"])),
@@ -257,6 +263,9 @@ def seed_all() -> str:
             if inserted or not dataset.row_count:
                 refresh_dataset_truth(db, dataset)
             datasets[spec["code"]] = dataset
+        # 先冻结每个数据集的 v1 基线快照，方案与后续查询都绑定这一不可变版本
+        for dataset in datasets.values():
+            snapshot_service.ensure_baseline_snapshot(db, dataset, created_by="seed")
         ensure_plans(db, datasets, admin_email="admin@sampleaqp.io")
         ensure_seed_audit(db)
 
@@ -266,14 +275,19 @@ def seed_all() -> str:
         plan_count = (
             db.scalar(select(func.count()).select_from(SamplePlan).where(SamplePlan.seed_key.is_not(None))) or 0
         )
+        snapshot_count = db.scalar(select(func.count()).select_from(DataSnapshot)) or 0
         user_count = db.scalar(select(func.count()).select_from(User)) or 0
         query_count = db.scalar(select(func.count()).select_from(ApproxQuery)) or 0
         qc_count = db.scalar(select(func.count()).select_from(QcCheck)) or 0
 
-    print(f"[SEED_DEMO] detail queries={query_count} qc={qc_count} user_count={len(users)}", flush=True)
+    print(
+        f"[SEED_DEMO] detail queries={query_count} qc={qc_count} snapshots={snapshot_count} "
+        f"user_count={len(users)}",
+        flush=True,
+    )
     summary = (
         f"SEED_SUMMARY brand=sampleaqp datasets={dataset_count} strata={strata_count} "
-        f"rows={row_count} plans={plan_count} users={user_count}"
+        f"rows={row_count} plans={plan_count} snapshots={snapshot_count} users={user_count}"
     )
     print(summary, flush=True)
     return summary

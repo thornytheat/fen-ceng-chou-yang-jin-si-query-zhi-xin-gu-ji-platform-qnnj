@@ -16,7 +16,7 @@ from src.constants.enums import (
     SignoffStage,
 )
 from src.models.qc_check import QcCheck
-from src.services import audit_service, query_service
+from src.services import audit_service, query_service, snapshot_service
 from src.utils.errors import AppError
 from src.utils.timeutil import local_iso
 
@@ -46,7 +46,15 @@ def _build_checks(db: Session, query, target_pct: float) -> tuple[list[dict], st
     ci_pct = float(query.rel_error_pct)
     strata = query.strata_detail or []
     min_sample = min((int(item.get("sample_size", 0)) for item in strata), default=0)
-    min_required = max((int(row.min_sample) for row in dataset.strata), default=30)
+    # 层最小样本口径取自查询固化的不可变快照，不回查会被刷新改写的活动分层表
+    if query.snapshot_id:
+        snapshot = snapshot_service.get_snapshot(db, query.snapshot_id)
+        min_required = max(
+            (int(item.get("min_sample", 30)) for item in (snapshot.strata_json or [])),
+            default=30,
+        )
+    else:
+        min_required = max((int(row.min_sample) for row in dataset.strata), default=30)
     population = sum(int(item.get("population", 0)) for item in strata) or dataset.row_count
     coverage = (query.sample_size / population * 100) if population else 0.0
     speed_ok = float(query.sample_ms) < float(query.full_scan_baseline_ms)

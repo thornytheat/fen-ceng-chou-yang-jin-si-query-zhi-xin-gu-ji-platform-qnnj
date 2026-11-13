@@ -1,9 +1,9 @@
-"""Celery 任务：心跳 + 全量基线刷新（真实全表聚合）。"""
+"""Celery 任务：心跳 + 数据快照刷新（整版重算层容量/均值/波动并原子发布）。"""
 from __future__ import annotations
 
 import time
 
-from src.config.celery_app import TASK_HEARTBEAT, TASK_REFRESH_TRUTH, celery_app
+from src.config.celery_app import TASK_HEARTBEAT, TASK_REFRESH_SNAPSHOT, TASK_REFRESH_TRUTH, celery_app
 from src.config.settings import settings
 from src.utils.logger import get_logger
 
@@ -25,9 +25,7 @@ def heartbeat_task() -> str:
     return "ok"
 
 
-@celery_app.task(name=TASK_REFRESH_TRUTH, bind=True, max_retries=1)
-def refresh_truth_task(self, dataset_id: int | None = None) -> dict:
-    """重算数据集的全量真值与真实扫描耗时（这是 worker 的主要业务职责）。"""
+def _refresh_snapshots(dataset_id: int | None) -> dict:
     from sqlalchemy import select
 
     from src.config.database import session_scope
@@ -35,14 +33,34 @@ def refresh_truth_task(self, dataset_id: int | None = None) -> dict:
     from src.services import dataset_service
 
     results: list[dict] = []
+    # 每个数据集一个独立事务：单个失败不影响其它数据集，且失败整体回滚不留半套状态
     with session_scope() as db:
         if dataset_id is None:
             ids = [row.id for row in db.scalars(select(Dataset))]
         else:
             ids = [int(dataset_id)]
         for current in ids:
-            measured = dataset_service.refresh_truth(db, current, actor_email="celery", actor_role="system")
-            measured["dataset_id"] = current
-            results.append(measured)
-            logger.info("truth refreshed dataset=%s rows=%s", current, measured.get("rows"))
-    return {"datasets": results}
+            outcome = dataset_service.publish_refresh_snapshot(
+                db, current, actor_email="celery", actor_role="system"
+            )
+            outcome["dataset_id"] = current
+            results.append(outcome)
+            logger.info(
+                "snapshot refreshed dataset=%s version=%s reused=%s",
+                current,
+                outcome.get("version"),
+                outcome.get("reused"),
+            )
+    return {"snapshots": results}
+
+
+@celery_app.task(name=TASK_REFRESH_SNAPSHOT, bind=True, max_retries=1)
+def refresh_snapshot_task(self, dataset_id: int | None = None) -> dict:
+    """重算数据集的整版层口径与全量真值，发布为不可变快照（worker 主要业务职责）。"""
+    return _refresh_snapshots(dataset_id)
+
+
+# 旧任务名保留为别名，避免已有部署 / 队列里残留的 refresh_truth 消息找不到消费者
+@celery_app.task(name=TASK_REFRESH_TRUTH, bind=True, max_retries=1)
+def refresh_truth_task(self, dataset_id: int | None = None) -> dict:
+    return _refresh_snapshots(dataset_id)

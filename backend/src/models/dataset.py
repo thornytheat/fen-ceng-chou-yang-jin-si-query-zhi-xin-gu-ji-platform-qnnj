@@ -31,11 +31,20 @@ class Dataset(Base):
     truth_total_minor: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     measured_full_scan_ms: Mapped[int | None] = mapped_column(Integer)
     note: Mapped[str | None] = mapped_column(String(400))
+    # 当前对外可见的数据版本指针；只有整版快照构建提交后才切换（use_alter 解开与快照表的循环外键）
+    current_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("data_snapshots.id", use_alter=True, name="fk_dataset_current_snapshot")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     strata: Mapped[list["DatasetStratum"]] = relationship(
         back_populates="dataset", cascade="all, delete-orphan", order_by="DatasetStratum.sort_order"
+    )
+    snapshots: Mapped[list["DataSnapshot"]] = relationship(
+        back_populates="dataset",
+        foreign_keys="DataSnapshot.dataset_id",
+        order_by="DataSnapshot.version.desc()",
     )
 
 

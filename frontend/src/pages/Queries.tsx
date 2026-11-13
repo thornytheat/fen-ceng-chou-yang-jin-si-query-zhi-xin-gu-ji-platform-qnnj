@@ -40,7 +40,10 @@ export default function Queries() {
   }, []);
 
   const activePlans = useMemo(
-    () => plans.items.filter((item) => item.status === 'active').sort((a, b) => a.target_error_pct - b.target_error_pct),
+    () =>
+      plans.items
+        .filter((item) => item.status === 'active' && !item.stale)
+        .sort((a, b) => a.target_error_pct - b.target_error_pct),
     [plans.items],
   );
 
@@ -52,6 +55,11 @@ export default function Queries() {
   }, [activePlans, planId, params]);
 
   const plan = activePlans.find((item) => item.id === planId) ?? null;
+
+  const staleActiveCount = useMemo(
+    () => plans.items.filter((item) => item.status === 'active' && item.stale).length,
+    [plans.items],
+  );
 
   useEffect(() => {
     if (!plan) return;
@@ -124,16 +132,23 @@ export default function Queries() {
             <VialTag code="ALG-2" label="HT+CI" />
           </div>
           <label className="field">
-            <span>已审批方案</span>
+            <span>已审批方案（仅匹配当前数据快照）</span>
             <select className="input" value={planId ?? ''} onChange={(event) => setPlanId(Number(event.target.value))}>
               {activePlans.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.code} · n={formatInt(item.sample_size)} · ±{item.expected_ci_pct.toFixed(2)}%
+                  {item.code} · n={formatInt(item.sample_size)} · ±{item.expected_ci_pct.toFixed(2)}% · {item.snapshot_code ?? ''}
                 </option>
               ))}
-              {!activePlans.length ? <option value="">没有已审批方案</option> : null}
+              {!activePlans.length ? <option value="">没有匹配当前快照的已审批方案</option> : null}
             </select>
           </label>
+
+          {staleActiveCount > 0 ? (
+            <div className="notice">
+              有 {staleActiveCount} 个已审批方案绑定的是旧数据快照，已不能跑新查询；请在「抽样方案」页按当前快照重建并重新审批。
+              它们的历史查询仍随原快照保留。
+            </div>
+          ) : null}
 
           <div className="field">
             <span>查询范围（不选 = 全部层）</span>
@@ -203,6 +218,9 @@ export default function Queries() {
                     {selected.code} · {selected.plan_name}
                   </div>
                   <h3>{selected.metric_label}的近似估计</h3>
+                  <div className="tiny mono" style={{ marginTop: 6 }}>
+                    数据版本（不可变快照）：{selected.snapshot_code ?? '未记录'}
+                  </div>
                 </div>
                 <div className="panel-actions">
                   <VerdictPill verdict={selected.qc_verdict ?? 'pending'} label={selected.qc_verdict ? undefined : '未自检'} size="sm" />
@@ -330,6 +348,7 @@ export default function Queries() {
                 <tr>
                   <th>编号</th>
                   <th>方案</th>
+                  <th>数据版本</th>
                   <th className="num">样本</th>
                   <th className="num">点估计</th>
                   <th className="num">CI</th>
@@ -344,6 +363,7 @@ export default function Queries() {
                   <tr key={row.id} className="row-clickable" onClick={() => void queryStore.select(row.id)}>
                     <td className="mono">{row.code}</td>
                     <td>{row.plan_name}</td>
+                    <td className="mono tiny">{row.snapshot_code ?? '—'}</td>
                     <td className="num mono">{formatInt(row.sample_size)}</td>
                     <td className="num mono">{formatMetric(row.value_estimate, unit, scale)}</td>
                     <td className="num mono">±{row.rel_error_pct.toFixed(2)}%</td>

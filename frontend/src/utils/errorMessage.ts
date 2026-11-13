@@ -6,6 +6,8 @@ const FALLBACK: Record<string, string> = {
   VALIDATION: '请求参数不合法',
   RATE_LIMITED: '请求过于频繁，请稍后再试',
   PLAN_NOT_ACTIVE: '只有已审批的方案才能跑近似查询',
+  PLAN_SNAPSHOT_STALE: '方案绑定的数据快照已过期，请按当前快照重建方案并重新审批',
+  SNAPSHOT_NOT_READY: '数据集还没有已发布的数据快照，请先刷新发布快照',
   QC_ORDER: '复核链必须按 分析师 → 负责人 → 业务方 顺序签署',
   QC_DUPLICATE_SIGNOFF: '该复核链已经签完',
   DATASET_EMPTY: '数据集还没有明细行',

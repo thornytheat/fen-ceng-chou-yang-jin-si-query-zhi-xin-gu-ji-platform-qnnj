@@ -19,6 +19,9 @@ class ApproxQuery(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     plan_id: Mapped[int] = mapped_column(ForeignKey("sample_plans.id", ondelete="CASCADE"), nullable=False)
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    # 结果固化所在的不可变数据版本：页面、结果、导出永远展示这一版的层容量/均值/波动
+    snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("data_snapshots.id", ondelete="RESTRICT"))
+    snapshot_code: Mapped[str | None] = mapped_column(String(64))
     code: Mapped[str] = mapped_column(String(48), unique=True, nullable=False)
     filter_strata: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     sample_size: Mapped[int] = mapped_column(Integer, nullable=False)

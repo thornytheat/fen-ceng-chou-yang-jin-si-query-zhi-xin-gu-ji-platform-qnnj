@@ -33,6 +33,8 @@ class QueryOut(BaseModel):
     dataset_name: str
     metric_label: str
     unit: str
+    snapshot_id: int | None = None
+    snapshot_code: str | None = None
     filter_strata: list[str]
     sample_size: int
     value_estimate: float

@@ -1,7 +1,16 @@
-"""数据集 / 分层响应。"""
+"""数据集 / 分层 / 数据快照响应。"""
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+
+
+class SnapshotBrief(BaseModel):
+    id: int
+    code: str
+    version: int
+    status: str
+    content_fingerprint: str
+    published_at: str | None = None
 
 
 class StratumOut(BaseModel):
@@ -13,6 +22,35 @@ class StratumOut(BaseModel):
     prior_std: float
     min_sample: int
     sort_order: int
+
+
+class SnapshotStratumOut(BaseModel):
+    code: str
+    label: str
+    population: int
+    mean_minor: int
+    mean_value: float
+    prior_std: float
+    min_sample: int
+    sort_order: int
+
+
+class SnapshotOut(BaseModel):
+    id: int
+    code: str
+    dataset_id: int
+    version: int
+    status: str
+    row_count: int
+    truth_total_minor: int
+    precision_target_pct: float
+    confidence_level: float
+    content_fingerprint: str
+    created_by: str
+    note: str | None
+    published_at: str | None
+    created_at: str | None
+    strata: list[SnapshotStratumOut]
 
 
 class DatasetOut(BaseModel):
@@ -37,6 +75,7 @@ class DatasetOut(BaseModel):
     strata_count: int
     plan_count: int
     query_count: int
+    snapshot: SnapshotBrief | None = None
     updated_at: str
 
 
@@ -54,3 +93,7 @@ class RefreshTruthOut(BaseModel):
     task_id: str | None
     queued: bool
     message: str
+    snapshot_id: int | None = None
+    snapshot_code: str | None = None
+    version: int | None = None
+    reused: bool | None = None
